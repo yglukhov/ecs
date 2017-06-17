@@ -1,5 +1,5 @@
 # ecs [![Build Status](https://travis-ci.org/yglukhov/ecs.svg?branch=master)](https://travis-ci.org/yglukhov/ecs)
-Entity Component System, designed to be data oriented. [More info on Wikipedia](https://en.wikipedia.org/wiki/Entity–component–system).
+Entity Component System, with [data oriented design](https://en.wikipedia.org/wiki/Data-oriented_design) in mind. [More info on Wikipedia](https://en.wikipedia.org/wiki/Entity–component–system).
 
 ## Usage
 ```nim
