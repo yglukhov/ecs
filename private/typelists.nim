@@ -2,7 +2,7 @@ import macros
 
 proc newTypeList(): NimNode {.compileTime.} = newNimNode(nnkTupleTy)
 
-iterator typeListTypes(tl: typedesc[tuple]): NimNode =
+iterator typeListTypes(tl: NimNode): NimNode =
     let t = getTypeImpl(getTypeInst(tl)[1])
     for typ in t:
         let i = typ.len - 2
@@ -67,7 +67,7 @@ macro typeListLen*(p: typedesc[tuple]): int =
     var i = 0
     for identDefs in t:
         inc(i, identDefs.len - 2)
-    return i
+    return newLit(i)
 
 macro appendArgsToCall*(call: untyped, numArgs: static[int], predicate: untyped): untyped =
     result = call
