@@ -89,7 +89,7 @@ template forEveryMatchingEntity*(w: World, cb: proc) =
         indexes[0] = -1
 
         forEachTypeIt(ttlist):
-            let c = w.getComponentCollection(it)
+            let c {.inject.} = w.getComponentCollection(it)
             if c.isNil: break top
 
             shallowCopy(entityIdsMatrix[i], c.entityIds)
