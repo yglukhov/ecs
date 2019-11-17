@@ -1,204 +1,217 @@
 import tables, macros
 import variant
-import private / [types, typelists, algorithms, component_collection]
+import private / [types, algorithms, component_collection]
+import typelists
 
 export types
 
 type
-    World* = ref object
-        entities: seq[Entity]
-        componentCollections: Table[TypeId, AbstractComponentCollection]
+  World* = ref object
+    entities: seq[Entity]
+    componentCollections: seq[AbstractComponentCollection] # Indexed by ComponentId
 
-    Entity* = ref object
-        id: EntityId
-        world: World
+  Entity* = ref object
+    id: EntityId
+    world: World
+
+  System*[T: tuple] = ref object of RootObj
+    world: World
 
 proc newWorld*(): World =
-    result.new()
-    result.entities = @[]
-    result.componentCollections = initTable[TypeId, AbstractComponentCollection]()
+  result.new()
 
 proc newEntity*(w: World): Entity =
-    result.new()
-    result.id = int32(w.entities.len())
-    result.world = w
-    w.entities.add(result)
+  result.new()
+  result.id = EntityId(w.entities.len())
+  result.world = w
+  w.entities.add(result)
 
-proc getComponentCollection*(w: World, T: typedesc): ComponentCollection[T] =
-    # private
-    const typId = getTypeId(T)
-    result = cast[type(result)](w.componentCollections.getOrDefault(typId))
+proc init*(s: System, w: World) =
+  s.world = w
+
+var componentIds {.compileTime.} = initTable[TypeId, ComponentId]()
+
+proc getComponentId*(T: typedesc): ComponentId {.inline.} =
+  const tid = getTypeId(T)
+  const componentId = componentIds.mgetOrPut(tid, componentIds.len)
+  componentId
+
+{.push checks: off.}
+proc getComponentCollection(w: World, compId: ComponentId): AbstractComponentCollection =
+  if compId < w.componentCollections.len:
+    return w.componentCollections[compId]
+
+proc getComponentCollection*(w: World, T: typedesc): ComponentCollection[T] {.inline.} =
+  # private
+  type TT = T
+  const tid = getComponentId(TT)
+  cast[ComponentCollection[T]](w.getComponentCollection(tid))
+
+proc getOrCreateComponentCollectionAux(w: World, compId: ComponentId): AbstractComponentCollection =
+  if compId < w.componentCollections.len:
+    return w.componentCollections[compId]
+  else:
+    w.componentCollections.setLen(compId + 1)
 
 proc getOrCreateComponentCollection[T](w: World): ComponentCollection[T] =
-    const typId = getTypeId(T)
-    result = cast[type(result)](w.componentCollections.getOrDefault(typId))
-    if result.isNil:
-        result = newComponentCollection[T]()
-        w.componentCollections[typId] = result
+  const typId = getComponentId(T)
+  var res = w.getOrCreateComponentCollectionAux(typId)
+  if res.isNil:
+    res = newComponentCollection[T]()
+    w.componentCollections[typId] = res
+  cast[ComponentCollection[T]](res)
+{.pop.}
 
 proc addComponent*[T](w: World, eid: EntityId, component: T) =
-    getOrCreateComponentCollection[T](w).addComponent(eid, component)
+  getOrCreateComponentCollection[T](w).addComponent(eid, component)
 
 proc getComponentPtr*(w: World, eid: EntityId, T: typedesc): ptr T =
-    let c = w.getComponentCollection(T)
-    if not c.isNil:
-        result = c.getComponentPtr(eid)
+  let c = w.getComponentCollection(T)
+  if not c.isNil:
+    result = c.getComponentPtr(eid)
 
 proc removeComponent*(w: World, eid: EntityId, T: typedesc) =
-    let c = w.getComponentCollection(T)
-    if not c.isNil:
-        c.removeComponent(eid)
+  let c = w.getComponentCollection(T)
+  if not c.isNil:
+    c.removeComponent(eid)
 
 proc removeEntity*(w: World, eid: EntityId) =
-    let e = w.entities[eid]
-    e.id = invaliEntityId
-    e.world = nil
-    for c in values(w.componentCollections):
-        c.removeComponentAux(eid)
+  let e = w.entities[eid]
+  e.id = invaliEntityId
+  e.world = nil
+  for c in w.componentCollections:
+    if not c.isNil: c.removeComponentAux(eid)
 
 proc addComponent*[T](e: Entity, component: T) {.inline.} =
-    e.world.addComponent(e.id, component)
+  e.world.addComponent(e.id, component)
 
 proc getComponentPtr*(e: Entity, T: typedesc): ptr T {.inline.} =
-    e.world.getComponentPtr(e.id, T)
+  e.world.getComponentPtr(e.id, T)
 
 proc removeComponent*(e: Entity, T: typedesc) {.inline.} =
-    e.world.removeComponent(e.id, T)
+  e.world.removeComponent(e.id, T)
 
 proc prepareForProcessing*(w: World) =
-    for c in values(w.componentCollections):
-        if c.needsSort:
-            c.prepareForProcessing()
+  for c in w.componentCollections:
+    if not c.isNil and c.needsSort:
+      c.prepareForProcessing()
 
-template forEveryMatchingEntity*(w: World, cb: proc) =
-    block top:
-        type ttlist = typeListToTupleType(typeListWithProcArgTypes(type(cb)))
+type
+  QueryArgFlag = enum
+    qaWrite
+    qaNot
 
-        type CompSeq[T] = seq[T]
-        template toComponentSeq(TComponent: typedesc): typedesc = CompSeq[TComponent]
+  QueryArg = object
+    typ: NimNode
+    name: NimNode
+    flags: set[QueryArgFlag]
 
-        type ttclist = mutateTypeList(ttlist, toComponentSeq)
+proc parseArgs(args: openarray[NimNode]): seq[QueryArg] =
+  for a in args:
+    var qa: QueryArg
+    if a.kind == nnkInfix and $a[0] == "as":
+      qa.name = a[2]
+      qa.name.expectKind(nnkIdent)
+      let typ = a[1]
+      if typ.kind == nnkVarTy:
+        qa.typ = typ[0]
+        qa.flags.incl(qaWrite)
+      else:
+        qa.typ = typ
+    else:
+      qa.typ = a
+    result.add(qa)
 
-        const numCollections = typeListLen(ttlist)
+type
+  Index = uint16
 
-        var entityIdsMatrix {.noInit.}: array[numCollections, seq[EntityId]]
-        var componentsMatrix {.noInit.}: ttclist
-        var collectionLengths {.noInit.}: array[numCollections, int32]
-        var indexes: array[numCollections, int32]
+proc rewindToId(ids: openarray[EntityId], id: var EntityId, index: var Index): bool =
+  # Set
+  let sz = Index(ids.len)
+  while index < sz:
+    let iId = ids[index]
+    if iId == invaliEntityId:
+      inc index
+      continue
+    elif iId == id:
+      return true
+    elif iId > id:
+      id = iId
+      return false
+    inc index
 
-        indexes[0] = -1
+  id = invaliEntityId
 
-        forEachTypeIt(ttlist):
-            let c {.inject.} = w.getComponentCollection(it)
-            if c.isNil: break top
+template forEveryMatchingEntityAux(s: System, compTypes: typedesc, body: untyped) =
+  block top:
+    const compCount = typeListLen(compTypes)
 
-            shallowCopy(entityIdsMatrix[i], c.entityIds)
-            shallowCopy(componentsMatrix[i], c.components)
-            collectionLengths[i] = int32(c.entityIds.len)
+    type
+      compPtrsTupleType = typeListMapIt(compTypes, ptr it)
+      compSeqsTupleType = typeListMapIt(compTypes, seq[it])
 
-        var curEntityId = 0'i32
+    let world = s.world
 
-        block processingLoop:
-            while true:
-                forEachTypeIt(ttlist):
-                    template iIndex: var int32 = indexes[i]
-                    template iEntityIds: seq[EntityId] = entityIdsMatrix[i]
-                    template iCollectionLen: int32 = collectionLengths[i]
-                    when i == 0:
-                        inc iIndex
-                        if iIndex == iCollectionLen:
-                            break processingLoop
-                        curEntityId = iEntityIds[iIndex]
-                        if curEntityId == invaliEntityId:
-                            continue
-                    else:
-                        while iIndex < iCollectionLen and
-                                (iEntityIds[iIndex] < curEntityId or iEntityIds[iIndex] == invaliEntityId):
-                            inc iIndex
+    var entityIdSeqs: array[compCount, seq[EntityId]]
+    var compSeqs: compSeqsTupleType
+    var indexes: array[compCount, uint16]
+    var output {.inject.}: compPtrsTupleType
 
-                        if iIndex == iCollectionLen:
-                            break processingLoop
+    typeListForEachIt(compTypes):
+      let c = world.getComponentCollection(type(it))
+      if c.isNil or c.entityIds.len == 0:
+        break top
+      shallowCopy(entityIdSeqs[iIt], c.entityIds)
+      assert((addr entityIdSeqs[iIt][0]) == addr c.entityIds[0], "Am I in global scope?")
+      shallowCopy(compSeqs[iIt], c.components)
 
-                        if iEntityIds[iIndex] != curEntityId:
-                            continue
+    var curId = EntityId(0)
+    while true:
+      typeListForEachIt(compTypes):
+        if not rewindToId(entityIdSeqs[iIt], curId, indexes[iIt]):
+          if curId == invaliEntityId:
+            break top
+          else:
+            continue
 
-                template convertArg(i: int): untyped =
-                    componentsMatrix[i][indexes[i]]
+      # echo "indexes: ", indexes
 
-                #echo "HIT: ", @indexes
-                appendArgsToCall(cb(), numCollections, convertArg)
+      typeListForEachIt(compTypes):
+        output[iIt] = addr compSeqs[iIt][indexes[iIt]]
+
+      `body`
+
+      inc curId
+
+macro forEveryMatchingEntity*(s: System, rawArgs: varargs[untyped]): untyped =
+  let body = rawArgs[^1]
+  let args = parseArgs(rawArgs[0 .. ^2])
+  # TODO: Verify query args against System type
+
+  let argTypes = newNimNode(nnkTupleConstr)
+  let aliases = newNimNode(nnkStmtList)
+  for i, a in args:
+    let typ = a.typ
+    argTypes.add(typ)
+    if not a.name.isNil:
+      let argName = a.name
+      let idx = newLit(i)
+      aliases.add quote do:
+        template `argName`: `typ` =
+          output[`idx`][]
+
+  result = quote do:
+    forEveryMatchingEntityAux(`s`, `argTypes`):
+      `aliases`
+      block:
+        `body`
 
 proc reorder*(w: World, order: openarray[EntityId]) =
-    var entities: seq[Entity]
-    shallowCopy(entities, w.entities)
-    for i, id in order:
-        swap(w.entities[i], w.entities[id])
-        w.entities[i].id = id
-    for c in values(w.componentCollections):
-        c.reorder(order)
-
-when isMainModule:
-    type
-        MyComponent1 = object
-            x, y: int
-        MyComponent2 = object
-            multiplicationResult: int
-
-    block:
-        let w = newWorld()
-        let e1 = w.newEntity()
-        let e2 = w.newEntity()
-        let e3 = w.newEntity()
-        let e4 = w.newEntity()
-
-        e1.addComponent(MyComponent1(x: 3, y: 5))
-        e1.addComponent(MyComponent2())
-
-        e3.addComponent(MyComponent1(x: 1, y: 1))
-
-        e4.addComponent(MyComponent1(x: 5, y: 2))
-        e4.addComponent(MyComponent2())
-
-        e2.addComponent(MyComponent1(x: 2, y: 6))
-        e2.addComponent(MyComponent2())
-
-        w.prepareForProcessing()
-
-        template runTest(body: untyped) =
-            proc test {.genSym.} =
-                body
-            test()
-
-        var processedEntities = 0
-
-        runTest:
-            proc process(c: MyComponent1, res: var MyComponent2) {.inline.} =
-                res.multiplicationResult = c.x * c.y
-                inc processedEntities
-
-            w.forEveryMatchingEntity(process)
-
-        doAssert(processedEntities == 3)
-        doAssert(e1.getComponentPtr(MyComponent2).multiplicationResult == 15)
-        doAssert(e2.getComponentPtr(MyComponent2).multiplicationResult == 12)
-        doAssert(e4.getComponentPtr(MyComponent2).multiplicationResult == 10)
-
-        processedEntities = 0
-
-        runTest:
-            proc process(c: MyComponent1) {.inline.} =
-                inc processedEntities
-            w.forEveryMatchingEntity(process)
-
-        doAssert(processedEntities == 4)
-
-        e1.removeComponent(MyComponent1)
-        e1.removeComponent(MyComponent2)
-
-        processedEntities = 0
-        runTest:
-            proc process(res: var MyComponent2, c: MyComponent1) {.inline.} =
-                inc processedEntities
-            w.forEveryMatchingEntity(process)
-
-        doAssert(processedEntities == 2)
+  var entities: seq[Entity]
+  shallowCopy(entities, w.entities)
+  for i, id in order:
+    swap(w.entities[i], w.entities[id])
+    w.entities[i].id = id
+  for c in w.componentCollections:
+    if not c.isNil:
+      c.reorder(order)

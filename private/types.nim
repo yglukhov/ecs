@@ -1,4 +1,5 @@
 type
-    EntityId* = int32
+  EntityId* = uint16
+  ComponentId* = int
 
-const invaliEntityId* = EntityId(-1)
+const invaliEntityId* = EntityId(0xffff)
