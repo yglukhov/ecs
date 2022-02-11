@@ -8,6 +8,15 @@ type
     ComponentCollection*[T] = ref object of AbstractComponentCollection
         components*: seq[T]
 
+iterator items*[T](c: ComponentCollection[T]): (EntityId, T) =
+    block:
+        if c.isNil:
+            break
+        assert c.entityIds.len == c.components.len
+        let l = c.components.len
+        for i in 0..<l:
+            yield (c.entityIds[i], c.components[i])
+
 proc newComponentCollection*[T](): ComponentCollection[T] =
     result.new()
     result.entityIds = @[]
@@ -19,6 +28,7 @@ proc addComponent*[T](c: ComponentCollection[T], eid: EntityId, component: T) =
     c.needsSort = true
 
 proc sort[T](c: ComponentCollection[T]) =
+    if not c.needsSort: return
     c.needsSort = false
 
     var entityIds: seq[EntityId]
@@ -50,7 +60,7 @@ proc sort[T](c: ComponentCollection[T]) =
     doAssert(res)
 
 proc indexOfComponent*[T](c: ComponentCollection[T], eid: EntityId): int32 =
-    if c.needsSort: c.sort()
+    c.sort()
     let m = c.entityIds.high
     result = int32(lowerBoundIt(c.entityIds, 0, m, cmp(it, eid) <= 0) - 1)
 

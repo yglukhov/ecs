@@ -1,9 +1,11 @@
 # Package
 
-version       = "0.1"
+version       = "1.0"
 author        = "Yuriy Glukhov"
 description   = "Entity Component System"
 license       = "MIT"
+srcDir        = "."
+skipDirs = @["tests"]
 
 # Dependencies
 requires "variant"

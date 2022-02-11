@@ -1,17 +1,16 @@
-import tables, macros
+import std / [tables, macros]
 import variant
-import private / [types, typelists, algorithms, component_collection]
-
-export types
+import ecs / [types, typelists, algorithms, components]
+export types, components
 
 type
     World* = ref object
-        entities: seq[Entity]
-        componentCollections: Table[TypeId, AbstractComponentCollection]
+        entities*: seq[Entity]
+        componentCollections*: Table[TypeId, AbstractComponentCollection]
 
     Entity* = ref object
-        id: EntityId
-        world: World
+        id*: EntityId
+        world*: World
 
 proc newWorld*(): World =
     result.new()
