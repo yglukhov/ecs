@@ -10,7 +10,12 @@ skipDirs = @["tests"]
 # Dependencies
 requires "variant"
 
-
-task tests, "Run tests":
+template runTests =
     exec "nim c -r tests/common.nim"
     # exec "nim js -r tests/common.nim"
+
+task test, "Run tests":
+    runTests
+
+task tests, "Run tests":
+    runTests
