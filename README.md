@@ -1,4 +1,5 @@
-# ecs [![Build Status](https://travis-ci.org/yglukhov/ecs.svg?branch=master)](https://travis-ci.org/yglukhov/ecs)
+# ecs [![Build Status](https://github.com/yglukhov/ecs/workflows/CI/badge.svg?branch=master)](https://github.com/yglukhov/ecs/actions?query=branch%3Amaster)
+
 Entity Component System, with [data oriented design](https://en.wikipedia.org/wiki/Data-oriented_design) in mind. [More info on Wikipedia](https://en.wikipedia.org/wiki/Entity–component–system).
 
 ## Usage
